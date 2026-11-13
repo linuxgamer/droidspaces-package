@@ -61,7 +61,10 @@ jobs:
                 dnf download --source "$src" >/dev/null
                 rpm -ivh --define "_topdir /tmp/top" /tmp/dl/*.src.rpm >/dev/null
                 cd /tmp/top/SOURCES
-                for t in *.tar.*; do tar xf "$t"; done
+                for t in *; do
+                  [ -f "$t" ] || continue
+                  if tar -tf "$t" >/dev/null 2>&1; then tar -xf "$t"; fi
+                done
                 pkgdir=$(find . -maxdepth 1 -type d ! -name . | head -1)
                 [ -n "$pkgdir" ] || { echo "no source tree for $src"; return 1; }
                 cd "$pkgdir"
