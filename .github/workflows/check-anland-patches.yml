@@ -1,0 +1,77 @@
+name: Check Anland patches against a distribution
+
+# Diagnostic: applies an Anland recipe's KWin/Xwayland patches in "dry run" mode inside the
+# target distribution's container. This answers the question that decides whether a new
+# distribution can get Anland Wayland support at all: do the patches still apply to the
+# KWin/Xwayland sources that distribution currently ships?
+#
+# It does not build or publish anything.
+on:
+  workflow_dispatch:
+    inputs:
+      distro_image:
+        description: Distribution container image to test against
+        required: true
+        default: 'fedora:45'
+      anland_ref:
+        description: Anland branch or tag holding the recipe
+        required: true
+        default: 'legacy'
+      recipe:
+        description: Recipe directory name (one version below the target)
+        required: true
+        default: 'Fedora44_v5'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Dry-run patches
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Fetch the recipe patches
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/SuperTurtleDev/anland/${{ inputs.anland_ref }}/producers/kde/${{ inputs.recipe }}"
+          mkdir -p patches
+          for f in kwin.patch xwayland.patch; do
+            curl -fsSL "$base/$f" -o "patches/$f"
+          done
+          wc -c patches/*
+
+      - name: Dry-run patches inside the target distribution
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD/patches:/patches:ro" \
+            "${{ inputs.distro_image }}" \
+            bash -euo pipefail -c '
+              dnf install -y --setopt=install_weak_deps=False \
+                dnf-plugins-core rpm-build patch cpio tar xz findutils
+              dnf config-manager setopt fedora-source.enabled=1 updates-source.enabled=1
+              dnf makecache >/dev/null
+
+              check() {
+                src="$1"; patch="$2"
+                echo "===== $src ====="
+                rm -rf /tmp/dl /tmp/top
+                mkdir -p /tmp/dl /tmp/top/{SOURCES,SPECS,BUILD,BUILDROOT,RPMS,SRPMS}
+                cd /tmp/dl
+                dnf download --source "$src" >/dev/null
+                rpm -ivh --define "_topdir /tmp/top" /tmp/dl/*.src.rpm >/dev/null
+                cd /tmp/top/SOURCES
+                for t in *.tar.*; do tar xf "$t"; done
+                pkgdir=$(find . -maxdepth 1 -type d ! -name . | head -1)
+                [ -n "$pkgdir" ] || { echo "no source tree for $src"; return 1; }
+                cd "$pkgdir"
+                echo "source tree: $pkgdir"
+                patch -p1 --dry-run < "$patch"
+              }
+
+              check kwin /patches/kwin.patch
+              echo
+              check xorg-x11-server-Xwayland /patches/xwayland.patch
+              echo
+              echo "ALL PATCHES APPLY"
+            '
