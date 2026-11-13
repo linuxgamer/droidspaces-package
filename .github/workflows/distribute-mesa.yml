@@ -164,6 +164,7 @@ jobs:
             '*_debian_trixie_arm64.tar.gz'
             '*_fedora_43_arm64.tar.gz'
             '*_fedora_44_arm64.tar.gz'
+            '*_fedora_45_arm64.tar.gz'
             '*_ubuntu_noble_arm64.tar.gz'
             '*_ubuntu_questing_arm64.tar.gz'
             '*_ubuntu_resolute_arm64.tar.gz'
