@@ -42,7 +42,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "stage/anland-kde-packages/${DISTRO}"
+          # Match upstream's layout: runtime packages only, no devel/doc/debug payloads.
+          rm -f pkgs/*devel* pkgs/*debug* pkgs/*-doc-*
           cp pkgs/*.rpm "stage/anland-kde-packages/${DISTRO}/"
+          ls -l "stage/anland-kde-packages/${DISTRO}/"
 
           kwin_rpm="$(ls pkgs/kwin-[0-9]*.rpm | head -1)"
           version="$(basename "$kwin_rpm" | sed -E 's/^kwin-([^-]+)-.*/\1/')"
