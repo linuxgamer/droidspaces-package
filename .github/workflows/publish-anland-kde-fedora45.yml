@@ -61,7 +61,9 @@ jobs:
           } > "stage/anland-kde-packages/${DISTRO}/.anland-kde-build-info"
 
           archive="anland-kde-${DISTRO}-kwin-${version}-aarch64.tar.gz"
-          tar -C stage -czf "$archive" anland-kde-packages
+          # Start the archive at the distro directory: the installer rejects entries
+          # outside anland-kde-packages/${DISTRO}/, and a bare parent entry counts.
+          tar -C stage -czf "$archive" "anland-kde-packages/${DISTRO}"
           sha="$(sha256sum "$archive" | awk '{print $1}')"
           size="$(wc -c < "$archive" | tr -d ' ')"
           echo "archive: $archive ($size bytes, sha256 $sha)"
