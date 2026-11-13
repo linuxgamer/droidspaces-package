@@ -1,0 +1,112 @@
+name: Publish Anland KDE for Fedora 45
+
+# Takes the patched KWin RPMs produced by the Fedora 45 build in linuxgamer/anland, packs
+# them the way the installer expects, and publishes them to the anland-kde-packages release
+# in this repository.
+#
+# The manifest only carries fedora45: install-anland-kde.sh looks up a single distribution key,
+# so other distributions keep reading upstream's full manifest instead of a stale mirror here.
+on:
+  workflow_dispatch:
+    inputs:
+      anland_run_id:
+        description: Run id in linuxgamer/anland that produced anland-fedora45-kwin
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  TAG: anland-kde-packages
+  MANIFEST: anland-kde-manifest
+  DISTRO: fedora45
+
+jobs:
+  publish:
+    name: Package and publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the built RPMs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          rm -rf pkgs
+          gh run download "${{ inputs.anland_run_id }}" \
+            -R "${{ github.repository_owner }}/anland" \
+            -n anland-fedora45-kwin -D pkgs
+          ls -l pkgs
+
+      - name: Pack the installer archive
+        run: |
+          set -euo pipefail
+          mkdir -p "stage/anland-kde-packages/${DISTRO}"
+          cp pkgs/*.rpm "stage/anland-kde-packages/${DISTRO}/"
+
+          kwin_rpm="$(ls pkgs/kwin-[0-9]*.rpm | head -1)"
+          version="$(basename "$kwin_rpm" | sed -E 's/^kwin-([^-]+)-.*/\1/')"
+          [[ -n "$version" ]] || { echo "cannot derive KWin version" >&2; exit 1; }
+          echo "KWin version: $version"
+
+          {
+            echo "distro=${DISTRO}"
+            echo "kwin_version=${version}"
+            echo "source_run=${{ inputs.anland_run_id }}"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "revision=${{ github.sha }}"
+          } > "stage/anland-kde-packages/${DISTRO}/.anland-kde-build-info"
+
+          archive="anland-kde-${DISTRO}-kwin-${version}-aarch64.tar.gz"
+          tar -C stage -czf "$archive" anland-kde-packages
+          sha="$(sha256sum "$archive" | awk '{print $1}')"
+          size="$(wc -c < "$archive" | tr -d ' ')"
+          echo "archive: $archive ($size bytes, sha256 $sha)"
+
+          {
+            echo "ARCHIVE=$archive"
+            echo "ARCHIVE_SHA=$sha"
+            echo "KWIN_VERSION=$version"
+          } >> "$GITHUB_ENV"
+
+      - name: Build the manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Keep any existing entries (other distributions) and replace this one.
+          if gh release download "$TAG" -R "${{ github.repository }}" -p "$MANIFEST" -O existing-manifest --clobber 2>/dev/null; then
+            grep -v -E "^(${DISTRO}=|${DISTRO}_sha256=)" existing-manifest > updated-manifest || true
+          else
+            : > updated-manifest
+          fi
+          if ! grep -q '^format=' updated-manifest; then
+            {
+              echo "format=1"
+              echo "release_tag=$TAG"
+              echo "revision=run-${{ github.run_id }}-${{ github.run_attempt }}"
+              echo "generated_at=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            } > updated-manifest
+          fi
+          {
+            echo "${DISTRO}=${ARCHIVE}"
+            echo "${DISTRO}_sha256=${ARCHIVE_SHA}"
+          } >> updated-manifest
+          cp updated-manifest "$MANIFEST"
+          cat "$MANIFEST"
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "updating $TAG"
+          else
+            gh release create "$TAG" -R "${{ github.repository }}" \
+              --title "Anland packages" \
+              --notes "Anland Wayland packages redistributed by this fork. Fedora 45 is built here; other distributions come from upstream."
+          fi
+          gh release upload "$TAG" -R "${{ github.repository }}" \
+            "$ARCHIVE" "$MANIFEST" --clobber
+          echo "published $ARCHIVE"
